@@ -1,0 +1,6 @@
+Jiaowoban Dark
+Copyright 2026 ZJFILOVE
+
+Original module source code is licensed under the Apache License, Version 2.0.
+The Gradle Wrapper and the compile-only Xposed API retain their upstream licenses
+and notices. See third_party/README.md and third_party/NOTICE-Xposed.txt.

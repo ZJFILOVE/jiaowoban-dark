@@ -2,6 +2,10 @@
 
 为交我办提供跟随系统的深色模式的 LSPosed / Xposed 模块。作用域仅为 `edu.sjtu.infoplus.taskcenter`，包含该应用的子进程。
 
+[源码仓库](https://github.com/ZJFILOVE/jiaowoban-dark) · [下载安装包](https://github.com/ZJFILOVE/jiaowoban-dark/releases) · [反馈问题](https://github.com/ZJFILOVE/jiaowoban-dark/issues)
+
+这是独立开发的主题适配模块，与交我办及上海交通大学官方无隶属关系。
+
 ## 使用
 
 1. 安装构建生成的 APK。
@@ -22,7 +26,7 @@
 
 ## 构建
 
-需要 JDK 17 或 21、Android SDK 36、Build Tools 36.0.0。Gradle Wrapper 自带校验值。本机的 JDK 21 已配置于 `~/.local/opt/jdk-21`，不改变系统默认 Java。
+需要 JDK 17 或 21、Android SDK 36、Build Tools 36.0.0。Gradle Wrapper 自带校验值，通过 `JAVA_HOME` 指定合适的 JDK。
 
 在 `local.properties` 配置本机 SDK：
 
@@ -31,7 +35,7 @@ sdk.dir=/path/to/Android/Sdk
 ```
 
 ```sh
-JAVA_HOME="$HOME/.local/opt/jdk-21" ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
 ```
 
 APK：`app/build/outputs/apk/debug/app-debug.apk`。当前交付为开发调试签名，不包含正式发布的私钥。
@@ -64,3 +68,7 @@ adb -s YOUR_DEVICE shell am instrument -w -e text 水源 io.github.jiaowoban.dar
 - [Xposed 加载包回调](https://api.xposed.info/reference/de/robv/android/xposed/IXposedHookLoadPackage.html)
 - [Android 16 ViewRootImpl](https://github.com/aosp-mirror/platform_frameworks_base/blob/android16-release/core/java/android/view/ViewRootImpl.java)
 - [Android WebView 深色主题](https://developer.android.com/develop/ui/views/layout/webapps/dark-theme)
+
+## 许可证
+
+原创模块代码采用 [Apache-2.0](LICENSE) 许可证。第三方组件保留原有许可证和声明，见 [第三方说明](third_party/README.md)。
