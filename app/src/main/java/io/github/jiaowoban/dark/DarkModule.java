@@ -1,6 +1,9 @@
 package io.github.jiaowoban.dark;
 
 import android.app.Activity;
+import android.app.Application;
+import android.app.Instrumentation;
+import android.content.Intent;
 import android.content.Context;
 import android.content.ContextWrapper;
 import android.content.res.Configuration;
@@ -36,14 +39,38 @@ public final class DarkModule implements IXposedHookLoadPackage {
     private final Set<WebView> webViews = Collections.newSetFromMap(new WeakHashMap<>());
     private final Map<TextView, ColorStateList> originalTextColors = new WeakHashMap<>();
     private final Map<Window, BarState> originalBars = new WeakHashMap<>();
+    private final Set<Window> windows = Collections.newSetFromMap(new WeakHashMap<>());
     private final PaymentCardTheme paymentCardTheme = new PaymentCardTheme();
+    private final ThemeController theme = new ThemeController(this::refreshTheme);
     private volatile Context appContext;
     private boolean webSettingsFailureLogged;
     private boolean textFailureLogged;
 
     @Override public void handleLoadPackage(XC_LoadPackage.LoadPackageParam pkg) {
         if (!TARGET.equals(pkg.packageName)) return;
-        log("loaded v0.1.0 in " + pkg.processName + " sdk=" + Build.VERSION.SDK_INT);
+        log("loaded v0.2.1 in " + pkg.processName + " sdk=" + Build.VERSION.SDK_INT);
+        // Reuse an explicitly addressed, declared Activity slot for our own page.
+        // Normal SettingsAct launches are untouched; no original settings code runs here.
+        XposedHelpers.findAndHookMethod(Instrumentation.class, "newActivity", ClassLoader.class,
+                String.class, Intent.class, new XC_MethodHook() {
+                    @Override protected void beforeHookedMethod(MethodHookParam param) {
+                        Intent intent = (Intent) param.args[2];
+                        if (intent != null && intent.getComponent() != null
+                                && TARGET.equals(intent.getComponent().getPackageName())
+                                && "edu.sjtu.infoplus.taskcenter.act.SettingsAct".equals(param.args[1])
+                                && intent.getBooleanExtra(ThemeController.PAGE_EXTRA, false)) {
+                            param.setResult(new AppearanceActivity(theme));
+                        }
+                    }
+                });
+        XposedHelpers.findAndHookMethod(Application.class, "attach", Context.class, new XC_MethodHook() {
+            @Override protected void afterHookedMethod(MethodHookParam param) {
+                Application application = (Application) param.thisObject;
+                if (!TARGET.equals(application.getPackageName())) return;
+                appContext = application;
+                theme.attach(application, application.getClassLoader());
+            }
+        });
         installRendererHooks(pkg.classLoader);
         XposedHelpers.findAndHookMethod(View.class, "onAttachedToWindow", new XC_MethodHook() {
             @Override protected void afterHookedMethod(MethodHookParam param) {
@@ -56,6 +83,8 @@ public final class DarkModule implements IXposedHookLoadPackage {
                 Activity activity = (Activity) param.thisObject;
                 if (!TARGET.equals(activity.getPackageName())) return;
                 appContext = activity.getApplicationContext();
+                theme.attach(appContext, activity.getClassLoader());
+                theme.installMenu(activity);
                 prepareWindow(activity.getWindow());
                 activity.getWindow().getDecorView().post(() -> prepareWindow(activity.getWindow()));
                 log("resumed " + activity.getClass().getSimpleName() + " night=" + night(activity));
@@ -65,7 +94,10 @@ public final class DarkModule implements IXposedHookLoadPackage {
                 new XC_MethodHook() {
                     @Override protected void afterHookedMethod(MethodHookParam param) {
                         Activity activity = (Activity) param.thisObject;
-                        activity.getWindow().getDecorView().post(() -> prepareWindow(activity.getWindow()));
+                        activity.getWindow().getDecorView().post(() -> {
+                            theme.installMenu(activity);
+                            prepareWindow(activity.getWindow());
+                        });
                     }
                 });
         XposedBridge.hookAllConstructors(WebView.class, new XC_MethodHook() {
@@ -95,7 +127,7 @@ public final class DarkModule implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(root, "determineForceDarkType", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam param) {
                     Context context = (Context) XposedHelpers.getObjectField(param.thisObject, "mContext");
-                    if (night(context)) param.setResult(1); // ForceDarkType.FORCE_DARK
+                    param.setResult(night(context) ? 1 : 0); // FORCE_DARK / NONE
                 }
             });
             log("renderer: ViewRootImpl.determineForceDarkType");
@@ -105,7 +137,7 @@ public final class DarkModule implements IXposedHookLoadPackage {
                 XposedHelpers.findAndHookMethod("android.graphics.HardwareRenderer", loader,
                         "setForceDark", boolean.class, new XC_MethodHook() {
                             @Override protected void beforeHookedMethod(MethodHookParam param) {
-                                if (night(appContext)) param.args[0] = true;
+                                param.args[0] = night(appContext);
                             }
                         });
                 log("renderer: HardwareRenderer.setForceDark(boolean)");
@@ -117,6 +149,7 @@ public final class DarkModule implements IXposedHookLoadPackage {
 
     private void prepareWindow(Window window) {
         if (window == null) return;
+        windows.add(window);
         View decor = window.getDecorView();
         decor.setForceDarkAllowed(true);
         prepareTree(decor);
@@ -140,6 +173,7 @@ public final class DarkModule implements IXposedHookLoadPackage {
     }
 
     private void prepareView(View view) {
+        if (ThemeController.ownsView(view)) return;
         if (paymentCardTheme.apply(view, night(view.getContext()))) return;
         boolean codeRegion = protectedCodeRegion(view);
         view.setForceDarkAllowed(!(view instanceof WebView) && !protectedSurface(view) && !codeRegion);
@@ -276,10 +310,20 @@ public final class DarkModule implements IXposedHookLoadPackage {
         }
     }
 
-    private static boolean night(Context context) {
-        Resources resources = context == null ? Resources.getSystem() : context.getResources();
-        return (resources.getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
-                == Configuration.UI_MODE_NIGHT_YES;
+    private boolean night(Context context) {
+        return theme.night(context);
+    }
+
+    private void refreshTheme() {
+        for (WebView view : webViews.toArray(new WebView[0])) {
+            if (view != null) configureWebView(view);
+        }
+        for (Window window : windows.toArray(new Window[0])) {
+            if (window != null) {
+                prepareWindow(window);
+                window.getDecorView().requestLayout();
+            }
+        }
     }
 
     private void logWebFailure(Throwable failure) {
